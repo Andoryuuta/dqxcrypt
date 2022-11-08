@@ -9,9 +9,6 @@ var procVceBlockEncryptBlowfishCtor = new NativeFunction(baseAddr.add(ptr(0x2BEF
 // leak until to the process we are injected into restarts.
 let pinned_allocs = new Map();
 function customAlloc(size: number): NativePointer {
-    //var procGameAllocator = new NativeFunction(baseAddr.add(ptr(0x3D860)), 'pointer', ['int'], 'mscdecl');
-    //let mem = procGameAllocator(size);
-
     let mem = Memory.alloc(size);
     pinned_allocs.set(mem, mem);
     return mem;
@@ -22,20 +19,6 @@ function customDealloc(ptr: NativePointer): void {
 }
 
 rpc.exports = {
-    // easyDecrypt: function(key: string, data_arr: Array<number>) {
-    //     let data = new Uint8Array(data_arr).buffer as ArrayBuffer;
-    //     let keyMem = customAlloc(key.length);
-    //     keyMem.writeAnsiString(key);
-
-    //     let dataMem = customAlloc(data.byteLength);
-    //     dataMem.writeByteArray(data);
-
-    //     let inner_decrypt = new NativeFunction(baseAddr.add(0x80CA40), 'bool', ['pointer', 'pointer', 'int'], 'mscdecl');
-
-    //     console.log("dataMem before: \n" + hexdump(dataMem));
-    //     inner_decrypt(dataMem, keyMem, data.byteLength);
-    //     console.log("dataMem after: \n" + hexdump(dataMem));
-    // },
     blowfishDecrypt: function(key: string, data_arr: Array<number>): ArrayBuffer {
         let data = new Uint8Array(data_arr).buffer as ArrayBuffer;
 
@@ -52,14 +35,14 @@ rpc.exports = {
         */
 
         let vf_vce_initalize = new NativeFunction(vtable.add(0x04).readPointer(), 'bool', ['pointer', 'pointer', 'int', 'int'], 'thiscall');
-        //let vf_vce_encrypt = new NativeFunction(vtable.add(0x0C).readPointer(), 'bool', ['pointer'], 'thiscall');
+        let vf_vce_reinitalize = new NativeFunction(vtable.add(0x08).readPointer(), 'bool', [], 'thiscall');
+        let vf_vce_encrypt = new NativeFunction(vtable.add(0x0C).readPointer(), 'bool', ['pointer', 'pointer', 'int', 'pointer'], 'thiscall');
         let vf_vce_decrypt = new NativeFunction(vtable.add(0x10).readPointer(), 'bool', ['pointer', 'pointer', 'pointer'], 'thiscall');
 
         let keyMem = customAlloc(key.length);
         keyMem.writeAnsiString(key);
 
         let result = vf_vce_initalize(blowfishObj, keyMem, 8*key.length, 0);
-        // console.log("init result: " + result);
 
         let src = new MSVCVector(customAlloc, customDealloc);
         src.setData(data);
@@ -68,9 +51,6 @@ rpc.exports = {
         dst.resize(data.byteLength);
         
         let result2 = vf_vce_decrypt(blowfishObj, src.ptr(), dst.ptr());
-        // console.log("decrypt result: " + result2);
-        console.log("src after: \n" + hexdump(src.get_start()));
-        console.log("dst after: \n" + hexdump(dst.get_start()));
 
         // Recalculate this in case the encryption changed the size somehow (padding, etc)
         let outputSize = dst.size();
@@ -107,16 +87,7 @@ rpc.exports = {
         let dst = new MSVCVector(customAlloc, customDealloc);
         dst.resize(8* (((data.byteLength+7)>>3)+4));
 
-        console.log("dst ptr: " + dst.ptr());
-        console.log("dst start: " + dst.get_start());
-        console.log("dst end: " + dst.get_end());
-        console.log("dst cap: " + dst.get_cap());
-        console.log("data.byteLength: " + data.byteLength);
-        
-        console.log("enc dst before: \n" + hexdump(dst.get_start()));
         let result2 = vf_vce_encrypt(blowfishObj, srcMem, data.byteLength, dst.ptr());
-        // console.log("decrypt result: " + result2);
-        console.log("enc dst after: \n" + hexdump(dst.get_start()));
 
         // Recalculate this in case the encryption changed the size somehow (padding, etc)
         let outputSize = dst.size();
