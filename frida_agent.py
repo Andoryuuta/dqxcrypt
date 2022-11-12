@@ -14,11 +14,15 @@ class FridaAgent():
         self.script = self.session.create_script(self._get_agent_script())
         self.script.load()
 
+        init_result = self.script.exports.init_agent()
+        if init_result != True:
+            raise RuntimeError("Failed to initalize frida agent (AOB scans, etc)")
+
     def detach_game(self):
         self.script.unload()
 
     def blowfish_decrypt(self, key: str, data: bytes) -> bytes:
-        return self.script.exports.blowfish_decrypt(key, [b for b in data])
+        return self.script.exports.blowfish_decrypt(key, list(data))
 
     def blowfish_encrypt(self, key: str, data: bytes) -> bytes:
-        return self.script.exports.blowfish_encrypt(key, [b for b in data])
+        return self.script.exports.blowfish_encrypt(key, list(data))

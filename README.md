@@ -9,6 +9,6 @@ pip install frida
 
 ## Usage:
 ```sh
-dqxcrypt.py decrypt <path to encrypted .cry file> <path to ManagedPackageDataClient.win32.pkg> 
+dqxcrypt.py decrypt <path to encrypted .cry file> <path to ManagedPackageDataClient.win32.pkg> {optional blowfish key}
 dqxcrypt.py encrypt <path to unencrypted .etp file> <encryption key string> 
 ```

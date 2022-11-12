@@ -34,7 +34,7 @@ def do_encrypt(agent, filepath, encryption_key):
         encrypted_data = agent.blowfish_encrypt(encryption_key, data)
         return write_cry_file(CryFile(0x9595243, 16, 0, encrypted_data))
 
-def do_decrypt(agent, filepath, managed_package_data_client_path, crib=b'EVTX'):
+def do_decrypt(agent, filepath, managed_package_data_client_path, input_key=None, crib=b'EVTX'):
     # Read the encrypted data + key file
     cryfile = read_cry_file(filepath)
     mpdc = ManagedPackageDataClient()
@@ -54,20 +54,29 @@ def do_decrypt(agent, filepath, managed_package_data_client_path, crib=b'EVTX'):
 
         print('')
 
-    # Try decrypting with all of the keys in the file until we find our crib text.
-    for key_group in mpdc.group_keys:
-        for key in key_group:
-            decrypted_data = agent.blowfish_decrypt(key, cryfile.data)
-            if decrypted_data[:len(crib)] == crib:
-                return (key, decrypted_data)
+    if input_key is None:
+        # Try decrypting with all of the keys in the file until we find our crib text.
+        for key_group in mpdc.group_keys:
+            for key in key_group:
+                print("Trying decryption with key: " + key)
+                decrypted_data = agent.blowfish_decrypt(key, cryfile.data)
+                if decrypted_data[:len(crib)] == crib:
+                    return (key, decrypted_data)
+    else:
+        print("Decrypting with key: " + input_key)
+        decrypted_data = agent.blowfish_decrypt(input_key, cryfile.data)
+        if decrypted_data[:len(crib)] == crib:
+            return (input_key, decrypted_data)
 
     return (None, None)
 
 
 def main():
-
     # Terrible CLI parsing, but it works, so meh.
     if len(sys.argv) < 2:
+        print_usage()
+        exit(1)
+    elif sys.argv[1] not in ('encrypt', 'decrypt'):
         print_usage()
         exit(1)
     elif sys.argv[1] == 'encrypt' and len(sys.argv) < 4:
@@ -76,6 +85,7 @@ def main():
     elif sys.argv[1] == 'decrypt' and len(sys.argv) < 4:
         print_usage()
         exit(1)
+
 
     print('Attaching to game client...')
     
@@ -103,8 +113,13 @@ def main():
         filepath = sys.argv[2]
         managed_package_data_client_path = sys.argv[3]
 
+        input_key = None
+        if len(sys.argv) >= 5:
+            input_key = sys.argv[4]
+            print(input_key)
+
         print(f'Decrypting {filepath} with keys from {managed_package_data_client_path}.')
-        (key, data) = do_decrypt(agent, filepath, managed_package_data_client_path)
+        (key, data) = do_decrypt(agent, filepath, managed_package_data_client_path, input_key)
 
         # Write file if we managed to decrypt it.
         if key != None:
