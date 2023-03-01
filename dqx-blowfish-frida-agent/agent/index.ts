@@ -1,10 +1,13 @@
 import { exit } from 'process';
 import { MSVCVector } from './msvc.js'
+import HWBP from './hwbp.js'
 
 const baseAddr = Process.enumerateModules()[0].base;
 const baseSize = Process.enumerateModules()[0].size;
 
 let procVceBlockEncryptBlowfishCtor: any = null
+let currentHashCallType: string
+let currentHashCallInput: string
 
 // A terrible global object to keep references to all allocated memory
 // this _should_ be cleared once we are done with our allocs, however,
@@ -49,9 +52,9 @@ rpc.exports = {
             .readPointer() // Now we have the offset relative to the next instruction
             .add(callInstructionAddress.add(5)); // Add the rel offset to the address of the next instruction (`call` is 5 bytes)
 
-        console.log("Found vce::BlockEncryptBlowfish::ctor @ " + vceBlockEncryptBlowfishCtorAddress);
+        // console.log("Found vce::BlockEncryptBlowfish::ctor @ " + vceBlockEncryptBlowfishCtorAddress);
 
-        procVceBlockEncryptBlowfishCtor = new NativeFunction(vceBlockEncryptBlowfishCtorAddress, 'pointer', ['pointer'], 'thiscall');
+        procVceBlockEncryptBlowfishCtor = new NativeFunction(vceBlockEncryptBlowfishCtorAddress, 'pointer', ['pointer'], 'thiscall'); 
 
         return true;
     },
@@ -128,5 +131,94 @@ rpc.exports = {
         // Recalculate this in case the encryption changed the size somehow (padding, etc)
         let outputSize = dst.size();
         return dst.get_start().readByteArray(outputSize)!;
+    },
+    installBlowfishLogger: function(): boolean {
+        console.log("Installing blowfish logger")
+
+        const packageLoadPattern = "55 8B EC 53 57 8B F9 83 7F 24 00 74 ?? 83 7D 08 00";
+        const patternScanResults = Memory.scanSync(baseAddr, baseSize, packageLoadPattern);
+        if(patternScanResults.length != 1) {
+            console.log("Failed to pattern match for unknown_decryptor::do_decrypt");
+            return false;
+        }
+
+        const bp = HWBP.attach(patternScanResults[0].address, onCall => {
+            let fileDataPtr = onCall.context.sp.add(0x04).readPointer();
+            let blowfishKey = onCall.context.sp.add(0x08).readPointer().readAnsiString();
+            let fileSize = onCall.context.sp.add(0x0C).readU32();
+            let filepath = onCall.context.sp.add(0x10).readPointer().readAnsiString();
+            send({message_type:'log', log_type:'bflog', filepath:filepath, file_size:fileSize, blowfish_key:blowfishKey});
+            //console.log(`[BFLOG] Path:${filepath}, FileSize:${fileSize}, Key:${blowfishKey}`)
+        })
+        
+
+        // // At first hash call with full path string
+        // const dirHashbp = HWBP.attach(baseAddr.add(0x5dea3), onCall => {
+        //     let dir = onCall.context.sp.readPointer().readAnsiString();
+        //     console.log(`[HASHLOG] Dir: ${dir}`)
+        // })
+
+        // // after first hash call
+        // const afterDirHashBp = HWBP.attach(baseAddr.add(0x5dea8), onCall => {
+        //     const ctx = onCall.context as Ia32CpuContext;
+        //     let dirHash = ctx.eax;
+        //     console.log(`[HASHLOG] Dir Hash: ${dirHash}`)
+        // })
+        // // after second hash call (that uses only filename)
+        // const afterFileHashBp = HWBP.attach(baseAddr.add(0x5deb5), onCall => {
+        //     const ctx = onCall.context as Ia32CpuContext;
+        //     let dirHash = ctx.eax;
+        //     console.log(`[HASHLOG] File Hash: ${dirHash}`)
+        // })
+
+        // const packageLoadPattern = "55 8B EC 51 53 56 8B F1 57 8B 4E 08 85 C9 74 ?? 8B 01 6A 01";
+        // const patternScanResults = Memory.scanSync(baseAddr, baseSize, packageLoadPattern);
+        // if(patternScanResults.length != 1) {
+        //     console.log("Failed to pattern match for SML::text::EventReader::package::Load");
+        //     return false;
+        // }
+
+        // const bp = HWBP.attach(patternScanResults[0].address, onCall => {
+        //     let filepath = onCall.context.sp.add(0x4).readPointer().readAnsiString();
+        //     let blowfish_key = onCall.context.sp.add(0x8).readPointer().readAnsiString();
+        //     console.log(`[BFLOG] Path: \"${filepath}\", Key:\"${blowfish_key}\"`)
+        // })
+
+        // Log SML::protocol::session::RequesterSessionCutSceneZoneClient Server->Client response packets
+        // including blowfish key for cutscene.
+        // const bp = HWBP.attach(baseAddr.add(0xc37680), onCall => {
+        //     let cut_scene_load_resp = onCall.context.sp.add(0x18).readPointer();
+        //     let cutscene_id = cut_scene_load_resp.add(0xC).readAnsiString();
+        //     let blowfish_key = cut_scene_load_resp.add(0x27).readAnsiString();
+        //     console.log("SML::protocol::session::RequesterSessionCutSceneZoneClient::vf27 - cutscene_id:" + cutscene_id + ", blowfish_key:" + blowfish_key);
+        //     bp.detach()
+        // })
+        return true;
+    },
+    installHashLogger: function(): boolean {
+        console.log("Installing hash logger")
+
+        // TODO(Andoryuuta): Pattern scan these two addresses before release.
+        const hashStringBp = HWBP.attach(baseAddr.add(0x5ECD0), onCall => {
+            let rawString = onCall.context.sp.add(0x04).readPointer().readAnsiString();
+            let usedLength = onCall.context.sp.add(0x08).readU32();
+
+            if (rawString?.length == usedLength) {
+                currentHashCallType = "file";
+            } else {
+                currentHashCallType = "dir";
+            }
+
+            currentHashCallInput = rawString?.slice(0, usedLength)!;
+        })
+
+        const hashStringEndBp = HWBP.attach(baseAddr.add(0x5ee82), onCall => {
+            const ctx = onCall.context as Ia32CpuContext;
+            let hash = ctx.eax;
+            //console.log(`[HASHLOG] Type:${currentHashCallType}, String:${currentHashCallInput}, Hash: ${hash}`);
+            send({message_type:'log', log_type:'hashlog', hash_type:currentHashCallType, hash_input:currentHashCallInput, hash_output:hash});
+        })
+
+        return true;
     }
 }
