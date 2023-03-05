@@ -156,7 +156,7 @@ rpc.exports = {
         console.log("Installing hash logger")
 
         // Find start of function that does CRC32-poly8 checksum of file hashes.
-        const hashStringStartPattern = "55 8B EC 53 57 8B F9 83 7F 24 00 74 ?? 83 7D 08 00";
+        const hashStringStartPattern = "55 8B EC 8B 55 08 85 D2 75 04 33 C0 5D C3 56";
         const hashStringStartResults = Memory.scanSync(baseAddr, baseSize, hashStringStartPattern);
         if(hashStringStartResults.length != 1) {
             console.log("Failed to pattern match for hash_string(start)");
