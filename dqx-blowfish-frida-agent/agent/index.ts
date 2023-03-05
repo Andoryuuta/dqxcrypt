@@ -148,58 +148,37 @@ rpc.exports = {
             let fileSize = onCall.context.sp.add(0x0C).readU32();
             let filepath = onCall.context.sp.add(0x10).readPointer().readAnsiString();
             send({message_type:'log', log_type:'bflog', filepath:filepath, file_size:fileSize, blowfish_key:blowfishKey});
-            //console.log(`[BFLOG] Path:${filepath}, FileSize:${fileSize}, Key:${blowfishKey}`)
         })
         
-
-        // // At first hash call with full path string
-        // const dirHashbp = HWBP.attach(baseAddr.add(0x5dea3), onCall => {
-        //     let dir = onCall.context.sp.readPointer().readAnsiString();
-        //     console.log(`[HASHLOG] Dir: ${dir}`)
-        // })
-
-        // // after first hash call
-        // const afterDirHashBp = HWBP.attach(baseAddr.add(0x5dea8), onCall => {
-        //     const ctx = onCall.context as Ia32CpuContext;
-        //     let dirHash = ctx.eax;
-        //     console.log(`[HASHLOG] Dir Hash: ${dirHash}`)
-        // })
-        // // after second hash call (that uses only filename)
-        // const afterFileHashBp = HWBP.attach(baseAddr.add(0x5deb5), onCall => {
-        //     const ctx = onCall.context as Ia32CpuContext;
-        //     let dirHash = ctx.eax;
-        //     console.log(`[HASHLOG] File Hash: ${dirHash}`)
-        // })
-
-        // const packageLoadPattern = "55 8B EC 51 53 56 8B F1 57 8B 4E 08 85 C9 74 ?? 8B 01 6A 01";
-        // const patternScanResults = Memory.scanSync(baseAddr, baseSize, packageLoadPattern);
-        // if(patternScanResults.length != 1) {
-        //     console.log("Failed to pattern match for SML::text::EventReader::package::Load");
-        //     return false;
-        // }
-
-        // const bp = HWBP.attach(patternScanResults[0].address, onCall => {
-        //     let filepath = onCall.context.sp.add(0x4).readPointer().readAnsiString();
-        //     let blowfish_key = onCall.context.sp.add(0x8).readPointer().readAnsiString();
-        //     console.log(`[BFLOG] Path: \"${filepath}\", Key:\"${blowfish_key}\"`)
-        // })
-
-        // Log SML::protocol::session::RequesterSessionCutSceneZoneClient Server->Client response packets
-        // including blowfish key for cutscene.
-        // const bp = HWBP.attach(baseAddr.add(0xc37680), onCall => {
-        //     let cut_scene_load_resp = onCall.context.sp.add(0x18).readPointer();
-        //     let cutscene_id = cut_scene_load_resp.add(0xC).readAnsiString();
-        //     let blowfish_key = cut_scene_load_resp.add(0x27).readAnsiString();
-        //     console.log("SML::protocol::session::RequesterSessionCutSceneZoneClient::vf27 - cutscene_id:" + cutscene_id + ", blowfish_key:" + blowfish_key);
-        //     bp.detach()
-        // })
         return true;
     },
     installHashLogger: function(): boolean {
         console.log("Installing hash logger")
 
-        // TODO(Andoryuuta): Pattern scan these two addresses before release.
-        const hashStringBp = HWBP.attach(baseAddr.add(0x5ECD0), onCall => {
+        // Find start of function that does CRC32-poly8 checksum of file hashes.
+        const hashStringStartPattern = "55 8B EC 53 57 8B F9 83 7F 24 00 74 ?? 83 7D 08 00";
+        const hashStringStartResults = Memory.scanSync(baseAddr, baseSize, hashStringStartPattern);
+        if(hashStringStartResults.length != 1) {
+            console.log("Failed to pattern match for hash_string(start)");
+            return false;
+        }
+        const hashStringStartAddr = hashStringStartResults[0].address;
+
+
+        // This is just the final `RET` instruction in the function scanned for above.
+        // We scan 12 bytes before, as we are trying to locate the end of the function
+        // and can't just pattern scan for `0xC3`.
+        const hashStringEndPattern = "33 04 8D ?? ?? ?? ?? 4E 75 D3 5E 5D C3";
+        const hashStringEndResults = Memory.scanSync(baseAddr, baseSize, hashStringEndPattern);
+        if(hashStringEndResults.length != 1) {
+            console.log("Failed to pattern match for hash_string(end)");
+            return false;
+        }
+        const hashStringEndAddr = hashStringEndResults[0].address.add(0xC);
+
+
+
+        const hashStringBp = HWBP.attach(hashStringStartAddr, onCall => {
             let rawString = onCall.context.sp.add(0x04).readPointer().readAnsiString();
             let usedLength = onCall.context.sp.add(0x08).readU32();
 
@@ -212,10 +191,9 @@ rpc.exports = {
             currentHashCallInput = rawString?.slice(0, usedLength)!;
         })
 
-        const hashStringEndBp = HWBP.attach(baseAddr.add(0x5ee82), onCall => {
+        const hashStringEndBp = HWBP.attach(hashStringEndAddr, onCall => {
             const ctx = onCall.context as Ia32CpuContext;
             let hash = ctx.eax;
-            //console.log(`[HASHLOG] Type:${currentHashCallType}, String:${currentHashCallInput}, Hash: ${hash}`);
             send({message_type:'log', log_type:'hashlog', hash_type:currentHashCallType, hash_input:currentHashCallInput, hash_output:hash});
         })
 
